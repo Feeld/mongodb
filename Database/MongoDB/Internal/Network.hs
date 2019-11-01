@@ -1,7 +1,8 @@
 -- | Compatibility layer for network package, including newtype 'PortID'
-{-# LANGUAGE CPP, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE CPP, GeneralizedNewtypeDeriving, OverloadedStrings #-}
 
-module Database.MongoDB.Internal.Network (Host(..), PortID(..), N.HostName, connectTo) where 
+module Database.MongoDB.Internal.Network (Host(..), PortID(..), N.HostName, connectTo, 
+                                          lookupReplicaSetName, lookupSeedList) where
 
 
 #if !MIN_VERSION_network(2, 9, 0)
@@ -17,6 +18,15 @@ import qualified Network.Socket as N
 import System.IO (Handle, IOMode(ReadWriteMode))
 
 #endif
+
+import Data.ByteString.Char8 (pack, unpack)
+import qualified Data.HashMap as HM (fromList, lookup)
+import Data.List (dropWhileEnd)
+import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import Network.DNS.Lookup (lookupSRV, lookupTXT)
+import Network.DNS.Resolver (defaultResolvConf, makeResolvSeed, withResolver)
+import Network.HTTP.Types.URI (parseQueryText)
 
 
 -- | Wraps network's 'PortNumber'
@@ -54,3 +64,25 @@ connectTo hostname (PortNumber port) = do
 -- * Host
 
 data Host = Host N.HostName PortID  deriving (Show, Eq, Ord)
+
+lookupReplicaSetName :: N.HostName -> IO (Maybe Text)
+-- ^ Retrieves the replica set name from the TXT DNS record for the given hostname
+lookupReplicaSetName hostname = do 
+  rs <- makeResolvSeed defaultResolvConf
+  res <- withResolver rs $ \resolver -> lookupTXT resolver (pack hostname)
+  case res of 
+    Left err -> pure Nothing 
+    Right (x:_) -> do 
+      let hm = HM.fromList . parseQueryText $ x
+      pure $ fromMaybe (Nothing :: Maybe Text) (HM.lookup "replicaSet" hm)
+
+lookupSeedList :: N.HostName -> IO [Host]
+-- ^ Retrieves the replica set seed list from the SRV DNS record for the given hostname
+lookupSeedList hostname = do 
+  rs <- makeResolvSeed defaultResolvConf
+  res <- withResolver rs $ \resolver -> lookupSRV resolver $ "_mongodb._tcp." <> pack hostname
+  case res of 
+    Left err -> pure []
+    Right srv -> pure $ map (\(pri, wei, por, tar) -> 
+      let tar' = dropWhileEnd (=='.') (unpack tar) 
+      in Host tar' (PortNumber . fromIntegral $ por)) srv
