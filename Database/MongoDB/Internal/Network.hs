@@ -20,8 +20,7 @@ import System.IO (Handle, IOMode(ReadWriteMode))
 #endif
 
 import Data.ByteString.Char8 (pack, unpack)
-import qualified Data.HashMap as HM (fromList, lookup)
-import Data.List (dropWhileEnd)
+import Data.List (dropWhileEnd, lookup)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Network.DNS.Lookup (lookupSRV, lookupTXT)
@@ -71,10 +70,10 @@ lookupReplicaSetName hostname = do
   rs <- makeResolvSeed defaultResolvConf
   res <- withResolver rs $ \resolver -> lookupTXT resolver (pack hostname)
   case res of 
-    Left err -> pure Nothing 
-    Right (x:_) -> do 
-      let hm = HM.fromList . parseQueryText $ x
-      pure $ fromMaybe (Nothing :: Maybe Text) (HM.lookup "replicaSet" hm)
+    Left _ -> pure Nothing 
+    Right [] -> pure Nothing 
+    Right (x:_) ->
+      pure $ fromMaybe (Nothing :: Maybe Text) (lookup "replicaSet" $ parseQueryText x)
 
 lookupSeedList :: N.HostName -> IO [Host]
 -- ^ Retrieves the replica set seed list from the SRV DNS record for the given hostname
@@ -82,7 +81,7 @@ lookupSeedList hostname = do
   rs <- makeResolvSeed defaultResolvConf
   res <- withResolver rs $ \resolver -> lookupSRV resolver $ "_mongodb._tcp." <> pack hostname
   case res of 
-    Left err -> pure []
-    Right srv -> pure $ map (\(pri, wei, por, tar) -> 
+    Left _ -> pure []
+    Right srv -> pure $ map (\(_, _, por, tar) -> 
       let tar' = dropWhileEnd (=='.') (unpack tar) 
       in Host tar' (PortNumber . fromIntegral $ por)) srv

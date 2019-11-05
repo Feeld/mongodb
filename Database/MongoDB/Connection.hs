@@ -56,9 +56,6 @@ import Database.MongoDB.Query (Command, Failure(ConnectionFailure), access,
                               slaveOk, runCommand, retrieveServerData)
 import qualified Database.MongoDB.Transport.Tls as TLS (connect)
 
-flip' :: (a -> b -> c -> d) -> b -> c -> a -> d
-flip' f x y z = f z x y
-
 adminCommand :: Command -> Pipe -> IO Document
 -- ^ Run command against admin database on server connected to pipe. Fail if connection fails.
 adminCommand cmd pipe =
@@ -159,11 +156,15 @@ _openReplicaSet timeoutSecs (rsName, seedList, transportSecurity) = do
 
 openReplicaSetSRV :: HostName -> IO ReplicaSet 
 -- ^ Open non-secure connections (on demand) to servers in a replica set. The seedlist and replica set name is fetched from the SRV and TXT DNS records for the given hostname. The value of 'globalConnectTimeout' at the time of this call is the timeout used for future member connect attempts. To use your own value call 'openReplicaSetSRV\'\'\'' instead.
-openReplicaSetSRV hostname = readIORef globalConnectTimeout >>= flip' _openReplicaSetSRV Unsecure hostname
+openReplicaSetSRV hostname = do 
+    timeoutSecs <- readIORef globalConnectTimeout
+    _openReplicaSetSRV timeoutSecs Unsecure hostname
 
 openReplicaSetSRV' :: HostName -> IO ReplicaSet 
 -- ^ Open secure connections (on demand) to servers in a replica set. The seedlist and replica set name is fetched from the SRV and TXT DNS records for the given hostname. The value of 'globalConnectTimeout' at the time of this call is the timeout used for future member connect attempts. To use your own value call 'openReplicaSetSRV\'\'\'\'' instead.
-openReplicaSetSRV' hostname = readIORef globalConnectTimeout >>= flip' _openReplicaSetSRV Secure hostname
+openReplicaSetSRV' hostname = do 
+    timeoutSecs <- readIORef globalConnectTimeout
+    _openReplicaSetSRV timeoutSecs Secure hostname
 
 openReplicaSetSRV'' :: Secs -> HostName -> IO ReplicaSet 
 -- ^ Open non-secure connections (on demand) to servers in a replica set. The seedlist and replica set name is fetched from the SRV and TXT DNS records for the given hostname. Supplied seconds timeout is used for connect attempts to members.
@@ -180,7 +181,7 @@ _openReplicaSetSRV timeoutSecs transportSecurity hostname = do
     case (replicaSetName, hosts) of 
         (Nothing, _) -> throwError $ userError "Failed to lookup replica set name"
         (_, [])  -> throwError $ userError "Failed to lookup replica set seedlist"
-        (Just rsName, hosts') -> 
+        (Just rsName, _) -> 
             case transportSecurity of 
                 Secure -> openReplicaSetTLS' timeoutSecs (rsName, hosts)
                 Unsecure -> openReplicaSet' timeoutSecs (rsName, hosts)
